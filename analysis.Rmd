@@ -9,6 +9,18 @@ We want to determine the elimination half-lives of the molecules in `pk_data.csv
 First, I will get a sense of what the data looks like and produce a series of exploratory plots.
 Then, I will do some non-linear modeling to determine the elimination half-lives of the compounds.
 
+### Final thoughts
+
+After this exercise, here are my final thoughts:
+
+- The following modeling approach assumes that a 2 phase degradation curve can be fit to the data.
+- This comes from the exploratory analysis which seems to suggest that most of the molecules are distributed at the same rate and then have a secondary decay rate corresponding to the elimination.
+- In the end, I would only exclude from the data curves which I labeled as having "singular-convergence".
+- For the curves with convergence and the curves with no-convergence, I am fairly confident in the estimates.
+- If I had more time, a major implementation I would do is to share estimates of the "distribution" half-life between molecules using a hierarchical modeling approach like Bayesian inference.
+- I would also add more curve quality control and likely try to flag curves based off of CV.
+- Finally, I would likely dig into the PK model a bit more to allow more nuance in how we model the elimination rate vs the distribution rate, with the assumption that elimination may not start right away.
+
 ### Setup
 
 ```{r}
