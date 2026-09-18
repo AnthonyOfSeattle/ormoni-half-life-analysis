@@ -7,8 +7,7 @@ output: html_document
 
 We want to determine the elimination half-lives of the molecules in `pk_data.csv`.
 First, I will get a sense of what the data looks like and produce a series of exploratory plots.
-Then, once I know what kind of problems are in the data, I will exclude outliers.
-Finally, I will do some non-linear modeling to determine the elimination half-lives of the compounds.
+Then, I will do some non-linear modeling to determine the elimination half-lives of the compounds.
 
 ### Setup
 
@@ -249,3 +248,160 @@ lapply(fit_list, function(entry) {
     theme_bw() +
     facet_grid(molecule_id ~ .)
 ```
+
+### Fit to entire dataset
+
+First, I will do a very liberal fit with all of the peptide to get a sense of distribution and elimination
+
+```{r}
+fit_list <- data |>
+  group_by(
+    molecule_id
+  ) |>
+  group_map(
+    function(df, key) {
+      baseline = df |>
+        filter(
+          timepoint_label == "pre-bleed"
+        ) |>
+        summarise(
+          concentration_ng_ml = median(concentration_ng_ml)
+        ) |>
+        unlist()
+      
+      df_filtered <- df |>
+        filter(
+          timepoint_label != "pre-bleed"
+        )
+      
+      
+      fit <- tryCatch(
+        fit <- fit_two_phase_decay(
+          x = df_filtered$hours_post_dose,
+          y = df_filtered$concentration_ng_ml,
+          baseline = baseline,
+          control = nls.control(maxiter = 1000, warnOnly = T)
+        ),
+        error = function(e) list()
+      )
+      fit[["message"]] <- fit$model$message
+      fit[["molecule_id"]] <- unlist(key)
+
+      return(fit)
+    }
+  )
+```
+
+```{r}
+lapply(fit_list, function(entry) entry[c("molecule_id", "message", "halflife1", "halflife2")]) |>
+  bind_rows() |>
+  pivot_longer(
+    3:4,
+    names_to = "Parameter"
+  ) |>
+  ggplot() +
+    geom_jitter(
+      aes(
+        x = Parameter,
+        y = value,
+        color = message
+      )
+    ) +
+    scale_y_continuous(
+      "Half-life (hours)",
+      transform = "log10",
+      breaks = c(0.1, 0.5, 1, 5, 10, 50)
+    ) +
+    theme_bw()
+```
+
+Overall, this is really good. The distribution half-life is very consistent and below 30 minutes whereas the actual half-lives vary from 1 to about 50 hours.
+There are some convergence failures. Some of these appear to be extremely fast degradation where the model cannot parse out the true elimination half-life vs
+very slow degradation curves.
+
+At this point, I am going to output a ranked list of curves since I believe that most are pretty good, but I will flag the ones with less confidence.
+
+```{r}
+lapply(fit_list, function(entry) entry[c("molecule_id", "baseline", "halflife1", "halflife2", "r_squared", "message")]) |>
+  bind_rows() |>
+  rename(
+    distribution_half_life = halflife1,
+    elimination_half_life = halflife2
+  ) |>
+  mutate(
+    message = recode_values(
+      message,
+      "relative convergence (4)" ~ "converged",
+      "singular convergence (7)" ~ "singular-convergence",
+      "function evaluation limit reached without convergence (9)" ~ "no-convergence"
+    )
+  ) |>
+  arrange(
+    elimination_half_life
+  ) |>
+  write_csv(
+    "molecule_half_lives.csv"
+  )
+```
+
+### Evaluating failures
+
+Lets look at one of the fast and and one of the slow curves to see what is up of those non-converging curves and see if something can be done.
+
+The following curve for peptide LIB027 did not converge and appeared as though it had a fast half-life.
+
+```{r}
+data |>
+  filter(
+    molecule_id == "LIB027"
+  ) %>%
+  mutate(
+    hours_post_dose = if_else(
+      is.na(hours_post_dose),
+      0, hours_post_dose
+    )
+  ) %>%
+  ggplot() +
+    geom_point(
+      aes(
+        x = hours_post_dose,
+        y = concentration_ng_ml
+      )
+    ) +
+    scale_y_continuous(transform = "log10") +
+    theme_bw() +
+    ggtitle(
+      "LIB027"
+    )
+```
+
+This appears to be correct and so the assumption that the model can't estimate distribution here is likely true.
+
+The following curve for peptide LIB076 did not converge and appeared as though it had a slow half-life.
+
+```{r}
+data |>
+  filter(
+    molecule_id == "LIB076"
+  ) %>%
+  mutate(
+    hours_post_dose = if_else(
+      is.na(hours_post_dose),
+      0, hours_post_dose
+    )
+  ) %>%
+  ggplot() +
+    geom_point(
+      aes(
+        x = hours_post_dose,
+        y = concentration_ng_ml
+      )
+    ) +
+    scale_y_continuous(transform = "log10") +
+    theme_bw() +
+    ggtitle(
+      "LIB076"
+    )
+```
+
+This does not look slow so somthing else must be killing the model's ability to converge.
