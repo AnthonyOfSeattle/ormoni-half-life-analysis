@@ -1,0 +1,126 @@
+---
+title: "Compound half-life analysis"
+output: html_document
+---
+
+### Goal and Approach
+
+We want to determine the elimination half-lives of the molecules in `pk_data.csv`.
+First, I will get a sense of what the data looks like and produce a series of exploratory plots.
+Then, once I know what kind of problems are in the data, I will exclude outliers.
+Finally, I will do some non-linear modeling to determine the elimination half-lives of the compounds.
+
+### Setup
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+
+data <- read.csv("pk_data.csv") |>
+  mutate(
+    is_control = is_control == "True"
+  )
+```
+
+### Exploratory Analysis
+
+```{r}
+data |>
+  mutate(
+    hours_post_dose = if_else(
+      is.na(hours_post_dose),
+      0, hours_post_dose
+    )
+  ) |>
+  filter(
+    is_control
+  ) |>
+  ggplot() +
+    geom_point(
+      aes(
+        x = hours_post_dose,
+        y = concentration_ng_ml,
+        colour = molecule_id
+      ),
+      alpha = .75
+    ) +
+    scale_y_continuous(transform = "log10") +
+    theme_bw()
+```
+
+The above plot lets me know that long lasting compounds will have a 2 phase decay curve.
+The first phase is distribution with a small amount of elimination before a major elimination phase comes.
+It is likely that distribution rate is very similar between all of the compounds and is over by hour 20 or so as evidence in CTRL_long.
+The difference in shape for the distribution phase of CTRL_medium and CTRL_short is likely coming from elimination that is a larger component of the effect.
+Next, I will get a sense of the general distribution of curves.
+
+```{r}
+data |>
+  mutate(
+    hours_post_dose = if_else(
+      is.na(hours_post_dose),
+      0, hours_post_dose
+    )
+  ) |>
+  group_by(molecule_id, hours_post_dose, is_control) |>
+  summarise(
+    concentration_ng_ml = median(concentration_ng_ml),
+    .groups = "drop"
+  ) |>
+  ggplot() +
+    geom_line(
+      aes(
+        x = hours_post_dose,
+        y = concentration_ng_ml,
+        group = molecule_id,
+        color = is_control
+      ),
+      alpha = .5
+    ) +
+    scale_y_continuous(transform = "log10") +
+    theme_bw()
+```
+
+Some things I notice here. One of which is that, after their initial spike, some compounds have a second small spike which may mess up non-linear modeling.
+Furthermore, most compounds do not fully eliminate within the experiment, including the fast eliminating compounds.
+For this latter group, the effect is likely technical, but it is still good to note since it will need to be taken into account when we do calculations.
+
+Lets look at a distribution of when the median of each time point falls bellow 50% of the 1hr concentration, which is a crude order of half-life
+```{r}
+threshold_point <- data |>
+  filter(
+    !is.na(hours_post_dose) & hours_post_dose >= 1
+  ) |>
+  group_by(
+    molecule_id, hours_post_dose, is_control
+  ) |>
+  summarise(
+    concentration_ng_ml = median(concentration_ng_ml),
+    .groups = "drop"
+  ) |>
+  group_by(molecule_id) |>
+  mutate(
+    passed_threshold = concentration_ng_ml < .5 * first(concentration_ng_ml)
+  ) |>
+  ungroup() |>
+  filter(passed_threshold) |>
+  distinct(molecule_id, .keep_all = T)
+
+threshold_point|>
+  ggplot() +
+    geom_bar(
+      aes(
+        x = hours_post_dose
+      )
+    ) +
+    geom_text(
+      aes(
+        x = 50,
+        y = 45,
+        label = paste("Total Peptides:", dim(threshold_point)[1])
+      ),
+      hjust = 1,
+      data = data.frame()
+    ) +
+    theme_bw()
+```
